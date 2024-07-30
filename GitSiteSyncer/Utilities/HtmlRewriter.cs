@@ -4,11 +4,13 @@ namespace GitSiteSyncer.Utilities
 {
     public class HtmlRewriter
     {
-        private readonly string _newHostDomain;
+        private readonly string _appHostDomain;
+        private readonly string _noAppHostDomain;
 
-        public HtmlRewriter(string newHostDomain)
+        public HtmlRewriter(string appHostDomain, string noAppHostDomain)
         {
-            _newHostDomain = newHostDomain;
+            _appHostDomain = appHostDomain;
+            _noAppHostDomain = noAppHostDomain;
         }
 
         public string RewriteUrls(string htmlContent)
@@ -16,25 +18,25 @@ namespace GitSiteSyncer.Utilities
             var htmlDocument = new HtmlDocument();
             htmlDocument.LoadHtml(htmlContent);
 
-            // Rewrite form actions
-            var forms = htmlDocument.DocumentNode.SelectNodes("//form[@action]");
-            if (forms != null)
+            // Rewrite links with class "app-link"
+            var appLinks = htmlDocument.DocumentNode.SelectNodes("//a[contains(@class, 'app-link') and @href]");
+            if (appLinks != null)
             {
-                foreach (var form in forms)
+                foreach (var link in appLinks)
                 {
-                    var action = form.GetAttributeValue("action", string.Empty);
-                    form.SetAttributeValue("action", RewriteUrl(action));
+                    var href = link.GetAttributeValue("href", string.Empty);
+                    link.SetAttributeValue("href", RewriteUrl(href, _appHostDomain));
                 }
             }
 
-            // Rewrite links with class "app-link"
-            var links = htmlDocument.DocumentNode.SelectNodes("//a[contains(@class, 'app-link') and @href]");
-            if (links != null)
+            // Rewrite links with class "no-app-link"
+            var noAppLinks = htmlDocument.DocumentNode.SelectNodes("//a[contains(@class, 'no-app-link') and @href]");
+            if (noAppLinks != null)
             {
-                foreach (var link in links)
+                foreach (var link in noAppLinks)
                 {
                     var href = link.GetAttributeValue("href", string.Empty);
-                    link.SetAttributeValue("href", RewriteUrl(href));
+                    link.SetAttributeValue("href", RewriteUrl(href, _noAppHostDomain));
                 }
             }
 
@@ -45,18 +47,17 @@ namespace GitSiteSyncer.Utilities
             }
         }
 
-        private string RewriteUrl(string url)
+        private string RewriteUrl(string url, string newHostDomain)
         {
             // Ensure the URL is absolute and replace the host with the new host domain
-            Uri originalUri;
-            if (Uri.TryCreate(url, UriKind.Absolute, out originalUri))
+            if (Uri.TryCreate(url, UriKind.Absolute, out Uri originalUri))
             {
-                var newUri = new Uri(_newHostDomain + originalUri.PathAndQuery);
+                var newUri = new Uri(newHostDomain + originalUri.PathAndQuery);
                 return newUri.ToString();
             }
             else if (Uri.TryCreate(url, UriKind.Relative, out originalUri))
             {
-                var newUri = new Uri(new Uri(_newHostDomain), originalUri);
+                var newUri = new Uri(new Uri(newHostDomain), originalUri);
                 return newUri.ToString();
             }
 
