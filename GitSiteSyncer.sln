@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.35004.147
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GitSiteSyncer", "GitSiteSyncer\GitSiteSyncer.csproj", "{08EBB53B-51F6-4538-A5C4-0F5E7AFFBB11}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{08EBB53B-51F6-4538-A5C4-0F5E7AFFBB11}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{08EBB53B-51F6-4538-A5C4-0F5E7AFFBB11}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{08EBB53B-51F6-4538-A5C4-0F5E7AFFBB11}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{08EBB53B-51F6-4538-A5C4-0F5E7AFFBB11}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {307C78FF-ABCF-4693-94C0-DEBF14227199}
+	EndGlobalSection
+EndGlobal
