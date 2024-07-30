@@ -1,5 +1,8 @@
 ﻿using GitSiteSyncer.Models;
 using GitSiteSyncer.Utilities;
+using System;
+using System.IO;
+using System.Threading.Tasks;
 
 class Program
 {
@@ -35,7 +38,7 @@ class Program
             try
             {
                 SitemapReader sitemapReader = new SitemapReader();
-                HtmlRewriter rewriter = new HtmlRewriter(config.AppHostDomain);
+                HtmlRewriter rewriter = new HtmlRewriter(config.AppHostDomain, config.NoAppHostDomain);
                 HtmlDownloader downloader = new HtmlDownloader(rewriter);
                 GitHelper gitHelper = new GitHelper(config.GitDirectory, config.GitCredentials);
 
@@ -45,8 +48,6 @@ class Program
                 {
                     await downloader.DownloadUrlAsync(url, config.GitDirectory);
                 }
-
-                await downloader.DownloadUrlAsync(config.SitemapUrl, config.GitDirectory);
 
                 gitHelper.CommitAndPush("Updated files from sitemap");
             }
