@@ -1,11 +1,11 @@
 ﻿namespace GitSiteSyncer.Utilities
 {
-    public class HtmlDownloader
+    public class FileDownloader
     {
-        private HttpClient _client = new();
-        private HtmlRewriter _rewriter;
+        private readonly HttpClient _client = new();
+        private readonly ContentRewriter _rewriter;
 
-        public HtmlDownloader(HtmlRewriter rewriter)
+        public FileDownloader(ContentRewriter rewriter)
         {
             _rewriter = rewriter;
         }
@@ -15,7 +15,7 @@
             Console.WriteLine($"Getting {url}");
 
             var response = await _client.GetStringAsync(url);
-            var rewrittenContent = _rewriter.RewriteUrls(response);
+            var rewrittenContent = _rewriter.RewriteContent(response, url);
             var filePath = GetFilePathFromUrl(url, baseDirectory);
             var directoryPath = Path.GetDirectoryName(filePath);
 
@@ -38,10 +38,15 @@
             }
             else
             {
-                path = path.Trim('/') + ".html";
+                var lastSegment = Path.GetFileName(path);
+                if (string.IsNullOrEmpty(Path.GetExtension(lastSegment)))
+                {
+                    // No extension found, default to .html
+                    path += ".html";
+                }
             }
 
-            var filePath = Path.Combine(baseDirectory, path.Replace("/", Path.DirectorySeparatorChar.ToString()));
+            var filePath = Path.Combine(baseDirectory, path.TrimStart('/').Replace("/", Path.DirectorySeparatorChar.ToString()));
             return filePath;
         }
     }
