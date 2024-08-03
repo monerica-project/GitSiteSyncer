@@ -1,5 +1,6 @@
 ﻿using GitSiteSyncer.Models;
 using GitSiteSyncer.Utilities;
+using System;
 
 class Program
 {
@@ -45,6 +46,8 @@ class Program
                 {
                     await downloader.DownloadUrlAsync(url, config.GitDirectory);
                 }
+
+                await downloader.DownloadUrlAsync(config.SitemapUrl, config.GitDirectory);
 
                 gitHelper.PullAddCommitPush("Updated files from sitemap");
             }
