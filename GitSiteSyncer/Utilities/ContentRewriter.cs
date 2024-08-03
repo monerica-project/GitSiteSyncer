@@ -2,18 +2,31 @@
 
 namespace GitSiteSyncer.Utilities
 {
-    public class HtmlRewriter
+    public class ContentRewriter
     {
         private readonly string _appHostDomain;
         private readonly string _noAppHostDomain;
 
-        public HtmlRewriter(string appHostDomain, string noAppHostDomain)
+        public ContentRewriter(string appHostDomain, string noAppHostDomain)
         {
             _appHostDomain = appHostDomain;
             _noAppHostDomain = noAppHostDomain;
         }
 
-        public string RewriteUrls(string htmlContent)
+        public string RewriteContent(string content, string url)
+        {
+            var extension = Path.GetExtension(url);
+            if (extension == ".xml")
+            {
+                return RewriteXmlUrls(content);
+            }
+            else
+            {
+                return RewriteHtmlUrls(content);
+            }
+        }
+
+        private string RewriteHtmlUrls(string htmlContent)
         {
             var htmlDocument = new HtmlDocument();
             htmlDocument.LoadHtml(htmlContent);
@@ -45,6 +58,12 @@ namespace GitSiteSyncer.Utilities
                 htmlDocument.Save(writer);
                 return writer.ToString();
             }
+        }
+
+        private string RewriteXmlUrls(string xmlContent)
+        {
+            return xmlContent
+                .Replace(_appHostDomain, _noAppHostDomain);
         }
 
         private string RewriteUrl(string url, string newHostDomain)

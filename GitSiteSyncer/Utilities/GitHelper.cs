@@ -1,5 +1,6 @@
 ﻿using GitSiteSyncer.Models;
 using LibGit2Sharp;
+using System;
 
 namespace GitSiteSyncer.Utilities
 {
@@ -16,16 +17,18 @@ namespace GitSiteSyncer.Utilities
             _credentials = credentials;
         }
 
-        public void CommitAndPush(string message)
+        public void PullAddCommitPush(string commitMessage)
         {
             try
             {
+                Console.WriteLine("Pulling changes from remote, adding all files, committing, and pushing...");
+
                 using (var repo = new Repository(_repoPath))
                 {
                     var remote = repo.Network.Remotes[_remoteName];
 
                     // Fetch changes from the remote repository
-                    Commands.Fetch(repo, remote.Name, new string[] { $"refs/heads/{_branch}:refs/remotes/{_remoteName}/{_branch}" }, new FetchOptions
+                    Commands.Fetch(repo, remote.Name, new string[] { _branch }, new FetchOptions
                     {
                         CredentialsProvider = (url, usernameFromUrl, types) =>
                             new UsernamePasswordCredentials
@@ -39,64 +42,74 @@ namespace GitSiteSyncer.Utilities
                     var localBranch = repo.Branches[_branch];
                     var remoteBranch = repo.Branches[$"{_remoteName}/{_branch}"];
 
-                    // Merge remote changes if there are any
+                    // Merge the fetched changes from the remote branch into the local branch
                     if (remoteBranch.Tip != localBranch.Tip)
                     {
                         var merger = new Signature(_credentials.Username, _credentials.Email, DateTime.UtcNow);
-                        var mergeResult = repo.Merge(remoteBranch, merger, new MergeOptions());
+                        var mergeResult = repo.Merge(remoteBranch, merger, new MergeOptions
+                        {
+                            FileConflictStrategy = CheckoutFileConflictStrategy.Theirs // Choose strategy as needed
+                        });
 
                         if (mergeResult.Status == MergeStatus.Conflicts)
                         {
-                            Console.WriteLine("Conflicts occurred during merge. Please resolve them.");
-                            return;
-                        }
-                        else if (mergeResult.Status == MergeStatus.UpToDate)
-                        {
-                            Console.WriteLine("The local branch is up to date.");
-                        }
-                        else if (mergeResult.Status == MergeStatus.FastForward)
-                        {
-                            Console.WriteLine("The local branch was fast-forwarded.");
-                        }
-                        else if (mergeResult.Status == MergeStatus.NonFastForward)
-                        {
-                            Console.WriteLine("The local branch was merged with new commits.");
+                            Console.WriteLine("Conflicts occurred during merge. Resolving by keeping local changes.");
+                            foreach (var conflict in repo.Index.Conflicts)
+                            {
+                                Console.WriteLine($"Conflict: {conflict.Ours?.Path ?? conflict.Theirs.Path}");
+                                // Keep the local changes
+                                if (conflict.Ours != null)
+                                {
+                                    repo.Index.Add(conflict.Ours.Path);
+                                }
+                                else if (conflict.Theirs != null)
+                                {
+                                    repo.Index.Remove(conflict.Theirs.Path);
+                                }
+                            }
+                            repo.Index.Write();
                         }
                     }
 
-                    // Stage changes
+                    // Stage all changes, including new, modified, and deleted files (equivalent to git add -A)
                     Commands.Stage(repo, "*");
 
-                    // Check for uncommitted changes
+                    // Check the status of the repository
                     var status = repo.RetrieveStatus(new StatusOptions());
                     if (status.IsDirty)
                     {
-                        Signature author = new Signature(_credentials.Username, _credentials.Email, DateTime.UtcNow);
-                        repo.Commit(message, author, author);
-                    }
-
-                    // Push commits if any
-                    var aheadBy = localBranch.TrackingDetails.AheadBy;
-                    if (aheadBy.HasValue && aheadBy.Value > 0)
-                    {
-                        var options = new PushOptions
+                        Console.WriteLine("Changes detected:");
+                        foreach (var entry in status)
                         {
-                            CredentialsProvider = (url, usernameFromUrl, types) =>
-                                new UsernamePasswordCredentials()
-                                {
-                                    Username = _credentials.Username,
-                                    Password = _credentials.Password // Use PAT for GitHub
-                                }
-                        };
+                            Console.WriteLine($"{entry.State}: {entry.FilePath}");
+                        }
 
-                        repo.Network.Push(remote, localBranch.CanonicalName, options);
-                        Console.WriteLine($"Pushed {aheadBy.Value} commit(s) to {_remoteName}/{_branch}.");
+                        Signature author = new Signature(_credentials.Username, _credentials.Email, DateTime.UtcNow);
+                        repo.Commit(commitMessage, author, author);
                     }
                     else
                     {
-                        Console.WriteLine("No changes to push.");
+                        Console.WriteLine("No changes to commit.");
                     }
+
+                    // Push commits to the remote repository
+                    var options = new PushOptions
+                    {
+                        CredentialsProvider = (url, usernameFromUrl, types) =>
+                            new UsernamePasswordCredentials()
+                            {
+                                Username = _credentials.Username,
+                                Password = _credentials.Password // Use PAT for GitHub
+                            }
+                    };
+
+                    repo.Network.Push(remote, localBranch.CanonicalName, options);
+                    Console.WriteLine($"Pushed changes to {_remoteName}/{_branch}.");
                 }
+            }
+            catch (CheckoutConflictException ex)
+            {
+                Console.WriteLine($"Checkout conflict error: {ex.Message}");
             }
             catch (LibGit2SharpException ex)
             {
