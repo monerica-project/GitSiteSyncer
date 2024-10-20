@@ -1,15 +1,14 @@
 ﻿using GitSiteSyncer.Models;
 using LibGit2Sharp;
-using System;
 
 namespace GitSiteSyncer.Utilities
 {
     public class GitHelper
     {
-        private string _repoPath;
-        private string _remoteName = "origin";
-        private string _branch = "main";
-        private GitCredentials _credentials;
+        private readonly string _repoPath;
+        private readonly GitCredentials _credentials;
+        private readonly string _remoteName = "origin";
+        private readonly string _branch = "main";
 
         public GitHelper(string repoPath, GitCredentials credentials)
         {
@@ -17,108 +16,173 @@ namespace GitSiteSyncer.Utilities
             _credentials = credentials;
         }
 
-        public void PullAddCommitPush(string commitMessage)
+        /// <summary>
+        /// Ensures the local repository is fully synced with the remote, resolving any conflicts.
+        /// </summary>
+        public void ForceSyncRepo()
         {
             try
             {
-                Console.WriteLine("Pulling changes from remote, adding all files, committing, and pushing...");
-
                 using (var repo = new Repository(_repoPath))
                 {
-                    var remote = repo.Network.Remotes[_remoteName];
+                    bool hasUncommittedChanges = repo.RetrieveStatus().IsDirty;
 
-                    // Fetch changes from the remote repository
-                    Commands.Fetch(repo, remote.Name, new string[] { _branch }, new FetchOptions
+                    // Step 1: Stash uncommitted changes, if any.
+                    if (hasUncommittedChanges)
                     {
-                        CredentialsProvider = (url, usernameFromUrl, types) =>
-                            new UsernamePasswordCredentials
-                            {
-                                Username = _credentials.Username,
-                                Password = _credentials.Password // Use PAT for GitHub
-                            }
-                    }, null);
+                        Console.WriteLine("Stashing local changes...");
+                        SaveStash(repo);
+                    }
 
-                    // Get the local and remote branches
+                    // Step 2: Fetch changes from the remote.
+                    var remote = repo.Network.Remotes[_remoteName];
+                    Console.WriteLine("Fetching from remote...");
+                    Commands.Fetch(repo, remote.Name, new[] { _branch }, FetchOptionsWithCredentials(), null);
+
+                    // Step 3: Checkout the local branch and merge with remote.
                     var localBranch = repo.Branches[_branch];
                     var remoteBranch = repo.Branches[$"{_remoteName}/{_branch}"];
 
-                    // Merge the fetched changes from the remote branch into the local branch
-                    if (remoteBranch.Tip != localBranch.Tip)
-                    {
-                        var merger = new Signature(_credentials.Username, _credentials.Email, DateTime.UtcNow);
-                        var mergeResult = repo.Merge(remoteBranch, merger, new MergeOptions
-                        {
-                            FileConflictStrategy = CheckoutFileConflictStrategy.Theirs // Choose strategy as needed
-                        });
+                    Commands.Checkout(repo, localBranch);
+                    Console.WriteLine("Merging changes from remote...");
 
-                        if (mergeResult.Status == MergeStatus.Conflicts)
-                        {
-                            Console.WriteLine("Conflicts occurred during merge. Resolving by keeping local changes.");
-                            foreach (var conflict in repo.Index.Conflicts)
-                            {
-                                Console.WriteLine($"Conflict: {conflict.Ours?.Path ?? conflict.Theirs.Path}");
-                                // Keep the local changes
-                                if (conflict.Ours != null)
-                                {
-                                    repo.Index.Add(conflict.Ours.Path);
-                                }
-                                else if (conflict.Theirs != null)
-                                {
-                                    repo.Index.Remove(conflict.Theirs.Path);
-                                }
-                            }
-                            repo.Index.Write();
-                        }
+                    var mergeResult = repo.Merge(remoteBranch, CreateSignature(), new MergeOptions
+                    {
+                        FileConflictStrategy = CheckoutFileConflictStrategy.Theirs // Prefer remote changes
+                    });
+
+                    if (mergeResult.Status == MergeStatus.Conflicts)
+                    {
+                        Console.WriteLine("Conflicts detected. Resolving conflicts by keeping remote changes.");
+                        ResolveConflicts(repo);
                     }
 
-                    // Stage all changes, including new, modified, and deleted files (equivalent to git add -A)
-                    Commands.Stage(repo, "*");
-
-                    // Check the status of the repository
-                    var status = repo.RetrieveStatus(new StatusOptions());
-                    if (status.IsDirty)
+                    // Step 4: Reapply stashed changes, if any.
+                    if (hasUncommittedChanges)
                     {
-                        Console.WriteLine("Changes detected:");
-                        foreach (var entry in status)
-                        {
-                            Console.WriteLine($"{entry.State}: {entry.FilePath}");
-                        }
-
-                        Signature author = new Signature(_credentials.Username, _credentials.Email, DateTime.UtcNow);
-                        repo.Commit(commitMessage, author, author);
+                        Console.WriteLine("Applying stashed changes...");
+                        ApplyStash(repo);
                     }
-                    else
-                    {
-                        Console.WriteLine("No changes to commit.");
-                    }
-
-                    // Push commits to the remote repository
-                    var options = new PushOptions
-                    {
-                        CredentialsProvider = (url, usernameFromUrl, types) =>
-                            new UsernamePasswordCredentials()
-                            {
-                                Username = _credentials.Username,
-                                Password = _credentials.Password // Use PAT for GitHub
-                            }
-                    };
-
-                    repo.Network.Push(remote, localBranch.CanonicalName, options);
-                    Console.WriteLine($"Pushed changes to {_remoteName}/{_branch}.");
                 }
-            }
-            catch (CheckoutConflictException ex)
-            {
-                Console.WriteLine($"Checkout conflict error: {ex.Message}");
-            }
-            catch (LibGit2SharpException ex)
-            {
-                Console.WriteLine($"LibGit2Sharp error during Git operation: {ex.Message}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"General error during Git operation: {ex.Message}");
+                Console.WriteLine($"Error during repository sync: {ex.Message}");
             }
         }
+
+        public void StageCommitAndPush(string commitMessage)
+        {
+            try
+            {
+                using (var repo = new Repository(_repoPath))
+                {
+                    Console.WriteLine("Staging all changes...");
+                    Commands.Stage(repo, "*");
+
+                    var status = repo.RetrieveStatus(new StatusOptions());
+                    if (status.IsDirty)
+                    {
+                        Console.WriteLine("Committing changes...");
+                        var author = CreateSignature();
+                        repo.Commit(commitMessage, author, author);
+                    }
+
+                    Console.WriteLine("Pushing changes to remote...");
+                    var remote = repo.Network.Remotes[_remoteName];
+
+                    // Use force push by prefixing the refspec with "+".
+                    string refSpec = $"+refs/heads/{_branch}:refs/heads/{_branch}";
+                    repo.Network.Push(remote, refSpec, PushOptionsWithCredentials());
+
+                    Console.WriteLine("Changes successfully pushed to remote.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during commit or push: {ex.Message}");
+            }
+        }
+
+        private string SaveStash(Repository repo)
+        {
+            var stashBranchName = $"stash-{DateTime.UtcNow:yyyyMMddHHmmss}";
+            var stashBranch = repo.CreateBranch(stashBranchName);
+
+            Commands.Checkout(repo, stashBranch);
+            Console.WriteLine($"Created stash branch: {stashBranchName}");
+
+            Commands.Stage(repo, "*");
+            repo.Commit("Stashed changes", CreateSignature(), CreateSignature());
+
+            return stashBranchName;
+        }
+
+        private void ApplyStash(Repository repo)
+        {
+            var stashBranch = repo.Branches
+                .Where(b => b.FriendlyName.StartsWith("stash-"))
+                .OrderByDescending(b => b.Tip.Committer.When)
+                .FirstOrDefault();
+
+            if (stashBranch != null)
+            {
+                Console.WriteLine($"Applying stashed changes from {stashBranch.FriendlyName}...");
+                Commands.Checkout(repo, repo.Head);
+                repo.Merge(stashBranch, CreateSignature(), new MergeOptions { FileConflictStrategy = CheckoutFileConflictStrategy.Ours });
+
+                repo.Branches.Remove(stashBranch);
+                Console.WriteLine("Stashed changes applied and stash branch removed.");
+            }
+            else
+            {
+                Console.WriteLine("No stash found to apply.");
+            }
+        }
+
+        private void ResolveConflicts(Repository repo)
+        {
+            foreach (var conflict in repo.Index.Conflicts)
+            {
+                Console.WriteLine($"Conflict detected: {conflict.Ours?.Path ?? conflict.Theirs?.Path}");
+
+                // Always prefer remote changes.
+                if (conflict.Theirs != null)
+                {
+                    repo.Index.Add(conflict.Theirs.Path);
+                }
+                else if (conflict.Ours != null)
+                {
+                    repo.Index.Remove(conflict.Ours.Path);
+                }
+            }
+
+            repo.Index.Write(); // Save resolved conflicts.
+        }
+
+        private Signature CreateSignature() =>
+            new Signature(_credentials.Username, _credentials.Email, DateTime.UtcNow);
+
+        private FetchOptions FetchOptionsWithCredentials() =>
+            new FetchOptions
+            {
+                CredentialsProvider = (url, usernameFromUrl, types) =>
+                    new UsernamePasswordCredentials
+                    {
+                        Username = _credentials.Username,
+                        Password = _credentials.Password
+                    }
+            };
+
+        private PushOptions PushOptionsWithCredentials() =>
+            new PushOptions
+            {
+                CredentialsProvider = (url, usernameFromUrl, types) =>
+                    new UsernamePasswordCredentials
+                    {
+                        Username = _credentials.Username,
+                        Password = _credentials.Password
+                    }
+            };
     }
 }
