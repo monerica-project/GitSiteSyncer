@@ -1,6 +1,5 @@
 ﻿using GitSiteSyncer.Models;
 using GitSiteSyncer.Utilities;
-using System.Linq;
 
 class Program
 {
@@ -57,37 +56,55 @@ class Program
                 Console.WriteLine("Fetching sitemap URLs...");
                 var urls = await sitemapReader.GetUrlsAsync(config.SitemapUrl, config.DaysToConsider);
 
-                // Convert URLs to file paths based on the Git directory
-                var sitemapFilePaths = urls
-                    .Select(url => downloader.GetFilePathFromUrl(url, config.GitDirectory))
-                    .ToHashSet();
-
-                Console.WriteLine("Identifying existing HTML files...");
-                var existingHtmlFiles = Directory
-                    .EnumerateFiles(config.GitDirectory, "*.html", SearchOption.AllDirectories)
-                    .ToHashSet();
-
-                // Exclude specific HTML files listed in the config
-                var excludedFiles = config.Exclusions
-                    .Select(exclusion => Path.Combine(config.GitDirectory, exclusion))
-                    .ToHashSet();
-
-                var filesToDelete = existingHtmlFiles
-                    .Except(sitemapFilePaths) // Files not in the sitemap
-                    .Except(excludedFiles) // Exclude files from deletion
-                    .ToList();
-
-                Console.WriteLine("Downloading new or updated files...");
-                foreach (var url in urls)
+                // **Safety Check:** If no URLs are fetched, log and skip deletion.
+                if (urls == null || !urls.Any())
                 {
-                    await downloader.DownloadUrlAsync(url, config.GitDirectory);
+                    Console.WriteLine("No URLs found in the sitemap. Skipping file deletion.");
                 }
-
-                Console.WriteLine("Deleting obsolete HTML files...");
-                foreach (var file in filesToDelete)
+                else
                 {
-                    Console.WriteLine($"Deleting: {file}");
-                    File.Delete(file);
+                    // Convert URLs to file paths based on the Git directory
+                    var sitemapFilePaths = urls
+                        .Select(url => NormalizePath(downloader.GetFilePathFromUrl(url, config.GitDirectory)))
+                        .ToHashSet();
+
+                    Console.WriteLine("Identifying existing HTML files...");
+                    var existingHtmlFiles = Directory
+                        .EnumerateFiles(config.GitDirectory, "*.html", SearchOption.AllDirectories)
+                        .Select(NormalizePath) // Normalize paths for consistent comparison
+                        .ToHashSet();
+
+                    // Exclude specific HTML files listed in the config
+                    var excludedFiles = config.Exclusions
+                        .Select(exclusion => NormalizePath(Path.Combine(config.GitDirectory, exclusion)))
+                        .ToHashSet();
+
+                    // Determine which files to delete
+                    var filesToDelete = existingHtmlFiles
+                        .Except(sitemapFilePaths) // Files not in the sitemap
+                        .Except(excludedFiles) // Exclude files from deletion
+                        .ToList();
+
+                    Console.WriteLine("Downloading new or updated files...");
+                    foreach (var url in urls)
+                    {
+                        await downloader.DownloadUrlAsync(url, config.GitDirectory);
+                    }
+
+                    // **Only delete if there are valid files to delete**
+                    if (filesToDelete.Any())
+                    {
+                        Console.WriteLine("Deleting obsolete HTML files...");
+                        foreach (var file in filesToDelete)
+                        {
+                            Console.WriteLine($"Deleting: {file}");
+                            File.Delete(file);
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("No files to delete.");
+                    }
                 }
 
                 // Commit and push all changes to the Git repository
@@ -107,4 +124,12 @@ class Program
             await Task.Delay(TimeSpan.FromSeconds(15)); // Use async-friendly delay
         }
     }
+
+    /// <summary>
+    /// Normalize a file path to ensure consistent comparison.
+    /// </summary>
+    private static string NormalizePath(string path) =>
+        Path.GetFullPath(new Uri(path).LocalPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .ToUpperInvariant(); // Case-insensitive comparison
 }
