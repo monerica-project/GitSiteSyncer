@@ -56,7 +56,12 @@ class Program
                 Console.WriteLine("Fetching sitemap URLs...");
                 var urls = await sitemapReader.GetUrlsAsync(config.SitemapUrl, config.DaysToConsider);
 
-                // **Safety Check:** If no URLs are fetched, log and skip deletion.
+                // Download and save the sitemap file
+                Console.WriteLine($"Downloading sitemap from {config.SitemapUrl}...");
+                string sitemapFilePath = await DownloadSitemapAsync(config.SitemapUrl, config.GitDirectory);
+                Console.WriteLine($"Sitemap saved to: {sitemapFilePath}");
+
+                // **Safety Check:** If no URLs are fetched, skip deletion.
                 if (urls == null || !urls.Any())
                 {
                     Console.WriteLine("No URLs found in the sitemap. Skipping file deletion.");
@@ -91,7 +96,7 @@ class Program
                         await downloader.DownloadUrlAsync(url, config.GitDirectory);
                     }
 
-                    // **Only delete if there are valid files to delete**
+                    // Only delete if there are valid files to delete
                     if (filesToDelete.Any())
                     {
                         Console.WriteLine("Deleting obsolete HTML files...");
@@ -122,6 +127,32 @@ class Program
 
             Console.WriteLine("Done.");
             await Task.Delay(TimeSpan.FromSeconds(15)); // Use async-friendly delay
+        }
+    }
+
+    /// <summary>
+    /// Downloads the sitemap from the given URL and saves it in the Git directory.
+    /// </summary>
+    private static async Task<string> DownloadSitemapAsync(string sitemapUrl, string gitDirectory)
+    {
+        using var httpClient = new HttpClient();
+
+        try
+        {
+            var response = await httpClient.GetAsync(sitemapUrl);
+            response.EnsureSuccessStatusCode();
+
+            var content = await response.Content.ReadAsStringAsync();
+            var sitemapFileName = Path.GetFileName(new Uri(sitemapUrl).LocalPath);
+            var sitemapFilePath = Path.Combine(gitDirectory, sitemapFileName);
+
+            await File.WriteAllTextAsync(sitemapFilePath, content);
+            return sitemapFilePath;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error downloading sitemap: {ex.Message}");
+            throw;
         }
     }
 
