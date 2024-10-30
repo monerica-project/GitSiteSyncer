@@ -12,6 +12,11 @@
 
         public async Task DownloadUrlAsync(string url, string baseDirectory)
         {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
+
             try
             {
                 Console.WriteLine($"Getting {url}");

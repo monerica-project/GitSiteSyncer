@@ -1,16 +1,19 @@
-﻿using System.Xml.Linq;
+﻿using GitSiteSyncer.Models;
+using System.Xml.Linq;
+
 namespace GitSiteSyncer.Utilities
 {
     public class SitemapReader
     {
-        public async Task<List<string>> GetUrlsAsync(string sitemapUrl, int daysToConsider)
+        public async Task<List<SitemapEntry>> GetUrlsAsync(string sitemapUrl, int daysToConsider)
         {
-            List<string> urls = new List<string>();
+            List<SitemapEntry> entries = new List<SitemapEntry>();
             using (HttpClient client = new HttpClient())
             {
                 var sitemap = await client.GetStringAsync(sitemapUrl);
                 var xml = XDocument.Parse(sitemap);
-                XNamespace ns = "https://www.sitemaps.org/schemas/sitemap/0.9"; // The namespace from the XML file
+                XNamespace ns = "https://www.sitemaps.org/schemas/sitemap/0.9"; // XML namespace
+
                 var cutoffDate = DateTime.UtcNow.AddDays(-daysToConsider);
 
                 foreach (var urlElement in xml.Descendants(ns + "url"))
@@ -20,26 +23,27 @@ namespace GitSiteSyncer.Utilities
 
                     if (locElement != null)
                     {
-                        var url = locElement.Value;
-                        if (lastmodElement != null)
+                        string url = locElement.Value;
+                        DateTime? lastModified = null;
+
+                        if (lastmodElement != null && DateTime.TryParse(lastmodElement.Value, out DateTime lastmodDate))
                         {
-                            if (DateTime.TryParse(lastmodElement.Value, out DateTime lastmodDate))
-                            {
-                                if (lastmodDate >= cutoffDate)
-                                {
-                                    urls.Add(url);
-                                }
-                            }
+                            lastModified = lastmodDate;
                         }
-                        else
+
+                        // Add to entries only if last modified is within the cutoff date
+                        if (lastModified == null || lastModified >= cutoffDate)
                         {
-                            // If no lastmod, include the URL (optional based on requirements)
-                            urls.Add(url);
+                            entries.Add(new SitemapEntry
+                            {
+                                Url = url,
+                                LastModified = lastModified
+                            });
                         }
                     }
                 }
             }
-            return urls;
+            return entries;
         }
     }
 }
