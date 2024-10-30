@@ -10,6 +10,30 @@
             _rewriter = rewriter;
         }
 
+        public static async Task<string> DownloadSitemapAsync(string sitemapUrl, string gitDirectory)
+        {
+            using var httpClient = new HttpClient();
+
+            try
+            {
+                var response = await httpClient.GetAsync(sitemapUrl);
+                response.EnsureSuccessStatusCode();
+
+                var content = await response.Content.ReadAsStringAsync();
+                var sitemapFileName = Path.GetFileName(new Uri(sitemapUrl).LocalPath);
+                var sitemapFilePath = Path.Combine(gitDirectory, sitemapFileName);
+
+                await File.WriteAllTextAsync(sitemapFilePath, content);
+                return sitemapFilePath;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error downloading sitemap: {ex.Message}");
+                throw;
+            }
+        }
+
+
         public async Task DownloadUrlAsync(string url, string baseDirectory)
         {
             if (string.IsNullOrWhiteSpace(url))

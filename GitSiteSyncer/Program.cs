@@ -1,5 +1,11 @@
 ﻿using GitSiteSyncer.Models;
 using GitSiteSyncer.Utilities;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Threading.Tasks;
 
 class Program
 {
@@ -20,7 +26,7 @@ class Program
             return;
         }
 
-        // Ensure LockFileDirectory is set and exists
+        // Ensure LockFileDirectory exists
         if (string.IsNullOrEmpty(config.LockFileDirectory))
         {
             Console.WriteLine("LockFileDirectory not specified in config.");
@@ -53,63 +59,64 @@ class Program
                 FileDownloader downloader = new FileDownloader(rewriter);
 
                 Console.WriteLine("Fetching sitemap URLs...");
-                var urls = await sitemapReader.GetUrlsAsync(config.SitemapUrl, config.DaysToConsider);
+                var urls = await sitemapReader.GetUrlsAsync(config.SitemapUrl);
 
-                // Download and save the sitemap file
+                // Save the sitemap
                 Console.WriteLine($"Downloading sitemap from {config.SitemapUrl}...");
-                string sitemapFilePath = await DownloadSitemapAsync(config.SitemapUrl, config.GitDirectory);
+                string sitemapFilePath = await FileDownloader.DownloadSitemapAsync(config.SitemapUrl, config.GitDirectory);
                 Console.WriteLine($"Sitemap saved to: {sitemapFilePath}");
 
-                // **Safety Check:** Skip deletion if URLs are missing or outdated
-                var currentDate = DateTime.UtcNow.Date;
+                // Map URLs to local file paths
+                var sitemapFilePaths = urls
+                    .Select(url => NormalizePath(downloader.GetFilePathFromUrl(url.Url, config.GitDirectory)))
+                    .ToHashSet();
 
-                if (urls == null || !urls.Any() || !urls.Any(url => url.LastModified?.Date == currentDate))
+                Console.WriteLine("Identifying existing HTML files...");
+                var existingHtmlFiles = Directory
+                    .EnumerateFiles(config.GitDirectory, "*.html", SearchOption.AllDirectories)
+                    .Select(NormalizePath)
+                    .ToHashSet();
+
+                var excludedFiles = config.Exclusions
+                    .Select(exclusion => NormalizePath(Path.Combine(config.GitDirectory, exclusion)))
+                    .ToHashSet();
+
+                // Determine which files to delete: Local files not in the sitemap and not excluded
+                var filesToDelete = existingHtmlFiles
+                    .Except(sitemapFilePaths)
+                    .Except(excludedFiles)
+                    .ToList();
+
+                // **Download or update files only if modified within the `DaysToConsider` range**
+                var cutoffDate = DateTime.UtcNow.AddDays(-config.DaysToConsider);
+
+                Console.WriteLine("Downloading new or updated files...");
+                foreach (var url in urls)
                 {
-                    Console.WriteLine("No URLs for the current day. Skipping file deletion.");
-                }
-                else
-                {
-                    // Convert URLs to file paths based on the Git directory
-                    var sitemapFilePaths = urls
-                        .Select(url => NormalizePath(downloader.GetFilePathFromUrl(url.Url, config.GitDirectory)))
-                        .ToHashSet();
-
-                    Console.WriteLine("Identifying existing HTML files...");
-                    var existingHtmlFiles = Directory
-                        .EnumerateFiles(config.GitDirectory, "*.html", SearchOption.AllDirectories)
-                        .Select(NormalizePath)
-                        .ToHashSet();
-
-                    var excludedFiles = config.Exclusions
-                        .Select(exclusion => NormalizePath(Path.Combine(config.GitDirectory, exclusion)))
-                        .ToHashSet();
-
-                    // Determine which files to delete
-                    var filesToDelete = existingHtmlFiles
-                        .Except(sitemapFilePaths)
-                        .Except(excludedFiles)
-                        .ToList();
-
-                    Console.WriteLine("Downloading new or updated files...");
-                    foreach (var url in urls)
+                    if (url.LastModified == null || url.LastModified >= cutoffDate)
                     {
+                        Console.WriteLine($"Updating: {url.Url}");
                         await downloader.DownloadUrlAsync(url.Url, config.GitDirectory);
-                    }
-
-                    // Delete only if valid files are found for deletion
-                    if (filesToDelete.Any())
-                    {
-                        Console.WriteLine("Deleting obsolete HTML files...");
-                        foreach (var file in filesToDelete)
-                        {
-                            Console.WriteLine($"Deleting: {file}");
-                            File.Delete(file);
-                        }
                     }
                     else
                     {
-                        Console.WriteLine("No files to delete.");
+                        Console.WriteLine($"Skipping outdated URL: {url.Url}");
                     }
+                }
+
+                // Delete obsolete files (only those not in the sitemap and not excluded)
+                if (filesToDelete.Any())
+                {
+                    Console.WriteLine("Deleting obsolete HTML files...");
+                    foreach (var file in filesToDelete)
+                    {
+                        Console.WriteLine($"Deleting: {file}");
+                        File.Delete(file);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("No files to delete.");
                 }
 
                 // Commit and push changes to the repository
@@ -127,29 +134,6 @@ class Program
 
             Console.WriteLine("Done.");
             await Task.Delay(TimeSpan.FromSeconds(15)); // Async-friendly delay
-        }
-    }
-
-    private static async Task<string> DownloadSitemapAsync(string sitemapUrl, string gitDirectory)
-    {
-        using var httpClient = new HttpClient();
-
-        try
-        {
-            var response = await httpClient.GetAsync(sitemapUrl);
-            response.EnsureSuccessStatusCode();
-
-            var content = await response.Content.ReadAsStringAsync();
-            var sitemapFileName = Path.GetFileName(new Uri(sitemapUrl).LocalPath);
-            var sitemapFilePath = Path.Combine(gitDirectory, sitemapFileName);
-
-            await File.WriteAllTextAsync(sitemapFilePath, content);
-            return sitemapFilePath;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error downloading sitemap: {ex.Message}");
-            throw;
         }
     }
 
