@@ -45,7 +45,6 @@ class Program
             {
                 GitHelper gitHelper = new GitHelper(config.GitDirectory, config.GitCredentials);
 
-                // Step 1: Ensure the latest remote changes are synced
                 Console.WriteLine("Synchronizing with remote repository...");
                 gitHelper.ForceSyncRepo();
 
@@ -61,42 +60,43 @@ class Program
                 string sitemapFilePath = await DownloadSitemapAsync(config.SitemapUrl, config.GitDirectory);
                 Console.WriteLine($"Sitemap saved to: {sitemapFilePath}");
 
-                // **Safety Check:** If no URLs are fetched, skip deletion.
-                if (urls == null || !urls.Any())
+                // **Safety Check:** Skip deletion if URLs are missing or outdated
+                var currentDate = DateTime.UtcNow.Date;
+
+                if (urls == null || !urls.Any() || !urls.Any(url => url.LastModified?.Date == currentDate))
                 {
-                    Console.WriteLine("No URLs found in the sitemap. Skipping file deletion.");
+                    Console.WriteLine("No URLs for the current day. Skipping file deletion.");
                 }
                 else
                 {
                     // Convert URLs to file paths based on the Git directory
                     var sitemapFilePaths = urls
-                        .Select(url => NormalizePath(downloader.GetFilePathFromUrl(url, config.GitDirectory)))
+                        .Select(url => NormalizePath(downloader.GetFilePathFromUrl(url.Url, config.GitDirectory)))
                         .ToHashSet();
 
                     Console.WriteLine("Identifying existing HTML files...");
                     var existingHtmlFiles = Directory
                         .EnumerateFiles(config.GitDirectory, "*.html", SearchOption.AllDirectories)
-                        .Select(NormalizePath) // Normalize paths for consistent comparison
+                        .Select(NormalizePath)
                         .ToHashSet();
 
-                    // Exclude specific HTML files listed in the config
                     var excludedFiles = config.Exclusions
                         .Select(exclusion => NormalizePath(Path.Combine(config.GitDirectory, exclusion)))
                         .ToHashSet();
 
                     // Determine which files to delete
                     var filesToDelete = existingHtmlFiles
-                        .Except(sitemapFilePaths) // Files not in the sitemap
-                        .Except(excludedFiles) // Exclude files from deletion
+                        .Except(sitemapFilePaths)
+                        .Except(excludedFiles)
                         .ToList();
 
                     Console.WriteLine("Downloading new or updated files...");
                     foreach (var url in urls)
                     {
-                        await downloader.DownloadUrlAsync(url, config.GitDirectory);
+                        await downloader.DownloadUrlAsync(url.Url, config.GitDirectory);
                     }
 
-                    // Only delete if there are valid files to delete
+                    // Delete only if valid files are found for deletion
                     if (filesToDelete.Any())
                     {
                         Console.WriteLine("Deleting obsolete HTML files...");
@@ -112,7 +112,7 @@ class Program
                     }
                 }
 
-                // Commit and push all changes to the Git repository
+                // Commit and push changes to the repository
                 Console.WriteLine("Staging, committing, and pushing changes...");
                 gitHelper.StageCommitAndPush("Synced files from sitemap, including deletions.");
             }
@@ -126,13 +126,10 @@ class Program
             }
 
             Console.WriteLine("Done.");
-            await Task.Delay(TimeSpan.FromSeconds(15)); // Use async-friendly delay
+            await Task.Delay(TimeSpan.FromSeconds(15)); // Async-friendly delay
         }
     }
 
-    /// <summary>
-    /// Downloads the sitemap from the given URL and saves it in the Git directory.
-    /// </summary>
     private static async Task<string> DownloadSitemapAsync(string sitemapUrl, string gitDirectory)
     {
         using var httpClient = new HttpClient();
@@ -156,11 +153,8 @@ class Program
         }
     }
 
-    /// <summary>
-    /// Normalize a file path to ensure consistent comparison.
-    /// </summary>
     private static string NormalizePath(string path) =>
         Path.GetFullPath(new Uri(path).LocalPath)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .ToUpperInvariant(); // Case-insensitive comparison
+            .ToUpperInvariant();
 }
