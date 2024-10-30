@@ -5,7 +5,7 @@ namespace GitSiteSyncer.Utilities
 {
     public class SitemapReader
     {
-        public async Task<List<SitemapEntry>> GetUrlsAsync(string sitemapUrl, int daysToConsider)
+        public async Task<List<SitemapEntry>> GetUrlsAsync(string sitemapUrl)
         {
             List<SitemapEntry> entries = new List<SitemapEntry>();
             using (HttpClient client = new HttpClient())
@@ -13,8 +13,6 @@ namespace GitSiteSyncer.Utilities
                 var sitemap = await client.GetStringAsync(sitemapUrl);
                 var xml = XDocument.Parse(sitemap);
                 XNamespace ns = "https://www.sitemaps.org/schemas/sitemap/0.9"; // XML namespace
-
-                var cutoffDate = DateTime.UtcNow.AddDays(-daysToConsider);
 
                 foreach (var urlElement in xml.Descendants(ns + "url"))
                 {
@@ -31,15 +29,12 @@ namespace GitSiteSyncer.Utilities
                             lastModified = lastmodDate;
                         }
 
-                        // Add to entries only if last modified is within the cutoff date
-                        if (lastModified == null || lastModified >= cutoffDate)
+                        // Add every entry from the sitemap to the list, regardless of modification date.
+                        entries.Add(new SitemapEntry
                         {
-                            entries.Add(new SitemapEntry
-                            {
-                                Url = url,
-                                LastModified = lastModified
-                            });
-                        }
+                            Url = url,
+                            LastModified = lastModified
+                        });
                     }
                 }
             }
