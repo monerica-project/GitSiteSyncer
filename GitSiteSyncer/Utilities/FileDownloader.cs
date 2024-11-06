@@ -1,16 +1,20 @@
-﻿namespace GitSiteSyncer.Utilities
+﻿using GitSiteSyncer.Models;
+
+namespace GitSiteSyncer.Utilities
 {
     public class FileDownloader
     {
         private readonly HttpClient _client = new();
         private readonly ContentRewriter _rewriter;
+        private readonly AppConfig appConfig;
 
-        public FileDownloader(ContentRewriter rewriter)
+        public FileDownloader(ContentRewriter rewriter, AppConfig appConfig)
         {
+            this.appConfig = appConfig;
             _rewriter = rewriter;
         }
 
-        public static async Task<string> DownloadSitemapAsync(string sitemapUrl, string gitDirectory)
+        public async Task<string> DownloadSitemapAsync(string sitemapUrl, string gitDirectory)
         {
             using var httpClient = new HttpClient();
 
@@ -20,6 +24,13 @@
                 response.EnsureSuccessStatusCode();
 
                 var content = await response.Content.ReadAsStringAsync();
+
+                // Replace all occurrences of AppHostDomain with NoAppHostDomain in the sitemap content
+                if (!string.IsNullOrEmpty(this.appConfig.AppHostDomain) && !string.IsNullOrEmpty(this.appConfig.NoAppHostDomain))
+                {
+                    content = content.Replace(this.appConfig.AppHostDomain, this.appConfig.NoAppHostDomain);
+                }
+
                 var sitemapFileName = Path.GetFileName(new Uri(sitemapUrl).LocalPath);
                 var sitemapFilePath = Path.Combine(gitDirectory, sitemapFileName);
 
@@ -32,6 +43,7 @@
                 throw;
             }
         }
+
 
 
         public async Task DownloadUrlAsync(string url, string baseDirectory)

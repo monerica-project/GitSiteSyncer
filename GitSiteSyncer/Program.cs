@@ -50,14 +50,14 @@ class Program
 
                 SitemapReader sitemapReader = new SitemapReader();
                 ContentRewriter rewriter = new ContentRewriter(config.AppHostDomain, config.NoAppHostDomain);
-                FileDownloader downloader = new FileDownloader(rewriter);
+                FileDownloader downloader = new FileDownloader(rewriter, config);
 
                 Console.WriteLine("Fetching sitemap URLs...");
                 var urls = await sitemapReader.GetUrlsAsync(config.SitemapUrl);
 
                 // Save the sitemap
                 Console.WriteLine($"Downloading sitemap from {config.SitemapUrl}...");
-                string sitemapFilePath = await FileDownloader.DownloadSitemapAsync(config.SitemapUrl, config.GitDirectory);
+                string sitemapFilePath = await downloader.DownloadSitemapAsync(config.SitemapUrl, config.GitDirectory);
                 Console.WriteLine($"Sitemap saved to: {sitemapFilePath}");
 
                 // Map URLs to local file paths
