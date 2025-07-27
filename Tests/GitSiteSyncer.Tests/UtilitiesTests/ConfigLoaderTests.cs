@@ -18,7 +18,7 @@ namespace GitSiteSyncer.Tests.UtilitiesTests
                 ""Password"": ""password123""
             },
             ""SitemapUrl"": ""https://example.com/sitemap.xml"",
-            ""DaysToConsider"": 30,
+            ""MinutesToConsider"": 30,
             ""AppHostDomain"": ""app.example.com"",
             ""NoAppHostDomain"": ""no-app.example.com""
         }";
@@ -35,7 +35,7 @@ namespace GitSiteSyncer.Tests.UtilitiesTests
             Assert.Equal("user123", config.GitCredentials.Username);
             Assert.Equal("password123", config.GitCredentials.Password);
             Assert.Equal("https://example.com/sitemap.xml", config.SitemapUrl);
-            Assert.Equal(30, config.DaysToConsider);
+            Assert.Equal(30, config.MinutesToConsider);
             Assert.Equal("app.example.com", config.AppHostDomain);
             Assert.Equal("no-app.example.com", config.NoAppHostDomain);
 

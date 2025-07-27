@@ -81,8 +81,8 @@ class Program
                     .Except(excludedFiles)
                     .ToList();
 
-                // **Download or update files only if modified within the `DaysToConsider` range**
-                var cutoffDate = DateTime.UtcNow.AddDays(-config.DaysToConsider);
+                // **Download or update files only if modified within the `MinutesToConsider` range**
+                var cutoffDate = DateTime.UtcNow.AddMinutes(-config.MinutesToConsider);
 
                 Console.WriteLine("Downloading new or updated files...");
                 foreach (var url in urls)
