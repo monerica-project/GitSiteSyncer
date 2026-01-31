@@ -1,4 +1,5 @@
-﻿using GitSiteSyncer.Models;
+﻿using System.Net.Http;
+using GitSiteSyncer.Models;
 using GitSiteSyncer.Utilities;
 
 class Program
@@ -20,7 +21,6 @@ class Program
             return;
         }
 
-        // Ensure LockFileDirectory exists
         if (string.IsNullOrEmpty(config.LockFileDirectory))
         {
             Console.WriteLine("LockFileDirectory not specified in config.");
@@ -41,6 +41,8 @@ class Program
                 return;
             }
 
+            using var httpClient = new HttpClient();
+
             try
             {
                 GitHelper gitHelper = new GitHelper(config.GitDirectory, config.GitCredentials);
@@ -48,19 +50,18 @@ class Program
                 Console.WriteLine("Synchronizing with remote repository...");
                 gitHelper.ForceSyncRepo();
 
-                SitemapReader sitemapReader = new SitemapReader();
+                // ✅ shared HttpClient
+                SitemapReader sitemapReader = new SitemapReader(httpClient);
                 ContentRewriter rewriter = new ContentRewriter(config.AppHostDomain, config.NoAppHostDomain);
-                FileDownloader downloader = new FileDownloader(rewriter, config);
+                FileDownloader downloader = new FileDownloader(rewriter, config, httpClient);
 
                 Console.WriteLine("Fetching sitemap URLs...");
                 var urls = await sitemapReader.GetUrlsAsync(config.SitemapUrl);
 
-                // Save the sitemap
                 Console.WriteLine($"Downloading sitemap from {config.SitemapUrl}...");
                 string sitemapFilePath = await downloader.DownloadSitemapAsync(config.SitemapUrl, config.GitDirectory);
                 Console.WriteLine($"Sitemap saved to: {sitemapFilePath}");
 
-                // Map URLs to local file paths
                 var sitemapFilePaths = urls
                     .Select(url => NormalizePath(downloader.GetFilePathFromUrl(url.Url, config.GitDirectory)))
                     .ToHashSet();
@@ -75,13 +76,11 @@ class Program
                     .Select(exclusion => NormalizePath(Path.Combine(config.GitDirectory, exclusion)))
                     .ToHashSet();
 
-                // Determine which files to delete: Local files not in the sitemap and not excluded
                 var filesToDelete = existingHtmlFiles
                     .Except(sitemapFilePaths)
                     .Except(excludedFiles)
                     .ToList();
 
-                // **Download or update files only if modified within the `MinutesToConsider` range**
                 var cutoffDate = DateTime.UtcNow.AddMinutes(-config.MinutesToConsider);
 
                 Console.WriteLine("Downloading new or updated files...");
@@ -98,7 +97,6 @@ class Program
                     }
                 }
 
-                // Delete obsolete files (only those not in the sitemap and not excluded)
                 if (filesToDelete.Any())
                 {
                     Console.WriteLine("Deleting obsolete HTML files...");
@@ -113,7 +111,6 @@ class Program
                     Console.WriteLine("No files to delete.");
                 }
 
-                // Commit and push changes to the repository
                 Console.WriteLine("Staging, committing, and pushing changes...");
                 gitHelper.StageCommitAndPush("Synced files from sitemap, including deletions.");
             }
@@ -127,7 +124,7 @@ class Program
             }
 
             Console.WriteLine("Done.");
-            await Task.Delay(TimeSpan.FromSeconds(15)); // Async-friendly delay
+            await Task.Delay(TimeSpan.FromSeconds(15));
         }
     }
 
