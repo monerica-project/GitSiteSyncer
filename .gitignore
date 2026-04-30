@@ -88,4 +88,4 @@ rcf/
 **/appsettings.staging.json
 **/appsettings.production.json
 **/usersettings.json
- 
+publish/ 
