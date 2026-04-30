@@ -43,6 +43,12 @@ class Program
 
             using var httpClient = new HttpClient();
 
+            // Pick the right comparer for this OS:
+            // Windows = case-insensitive paths, Linux/macOS = case-sensitive.
+            var pathComparer = OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal;
+
             try
             {
                 GitHelper gitHelper = new GitHelper(config.GitDirectory, config.GitCredentials);
@@ -50,7 +56,6 @@ class Program
                 Console.WriteLine("Synchronizing with remote repository...");
                 gitHelper.ForceSyncRepo();
 
-                // ✅ shared HttpClient
                 SitemapReader sitemapReader = new SitemapReader(httpClient);
                 ContentRewriter rewriter = new ContentRewriter(config.AppHostDomain, config.NoAppHostDomain);
                 FileDownloader downloader = new FileDownloader(rewriter, config, httpClient);
@@ -64,21 +69,21 @@ class Program
 
                 var sitemapFilePaths = urls
                     .Select(url => NormalizePath(downloader.GetFilePathFromUrl(url.Url, config.GitDirectory)))
-                    .ToHashSet();
+                    .ToHashSet(pathComparer);
 
                 Console.WriteLine("Identifying existing HTML files...");
                 var existingHtmlFiles = Directory
                     .EnumerateFiles(config.GitDirectory, "*.html", SearchOption.AllDirectories)
                     .Select(NormalizePath)
-                    .ToHashSet();
+                    .ToHashSet(pathComparer);
 
                 var excludedFiles = config.Exclusions
                     .Select(exclusion => NormalizePath(Path.Combine(config.GitDirectory, exclusion)))
-                    .ToHashSet();
+                    .ToHashSet(pathComparer);
 
                 var filesToDelete = existingHtmlFiles
-                    .Except(sitemapFilePaths)
-                    .Except(excludedFiles)
+                    .Except(sitemapFilePaths, pathComparer)
+                    .Except(excludedFiles, pathComparer)
                     .ToList();
 
                 var cutoffDate = DateTime.UtcNow.AddMinutes(-config.MinutesToConsider);
@@ -102,8 +107,15 @@ class Program
                     Console.WriteLine("Deleting obsolete HTML files...");
                     foreach (var file in filesToDelete)
                     {
-                        Console.WriteLine($"Deleting: {file}");
-                        File.Delete(file);
+                        try
+                        {
+                            Console.WriteLine($"Deleting: {file}");
+                            File.Delete(file);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Could not delete {file}: {ex.Message}");
+                        }
                     }
                 }
                 else
@@ -128,8 +140,9 @@ class Program
         }
     }
 
+    // Don't uppercase — keep the real filesystem path so File.Delete works on Linux.
+    // OS-aware HashSet comparers handle case-insensitive matching on Windows.
     private static string NormalizePath(string path) =>
         Path.GetFullPath(new Uri(path).LocalPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .ToUpperInvariant();
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 }
