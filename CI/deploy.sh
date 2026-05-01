@@ -163,7 +163,7 @@ EOF
 TIMER_FILE="$TMP/$APP_NAME.timer"
 cat > "$TIMER_FILE" <<EOF
 [Unit]
-Description=Run $APP_NAME every $INTERVAL after the last run finished
+Description=Run $APP_NAME every 10 minutes (clock-aligned)
 
 [Timer]
 OnBootSec=2min
@@ -185,13 +185,7 @@ ssh "$VPS" "sudo systemctl daemon-reload"
 ssh "$VPS" "sudo systemctl disable --now $APP_NAME.service 2>/dev/null || true"
 ssh "$VPS" "sudo systemctl enable --now $APP_NAME.timer"
 ok "Timer installed and enabled"
-
-# ---- Trigger an immediate run to verify ------------------------------------
-step "Triggering an immediate run"
-ssh "$VPS" "sudo systemctl start $APP_NAME.service" || true
-sleep 3
-ssh "$VPS" "sudo systemctl status $APP_NAME.service --no-pager | head -20" || true
-
+ 
 echo
 echo "${C_GREEN}===============================${C_RESET}"
 echo "${C_GREEN} [$APP_NAME] Deploy complete${C_RESET}"

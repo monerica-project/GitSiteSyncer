@@ -21,14 +21,13 @@ namespace GitSiteSyncer.Utilities
             _appHostDomain = appHostDomain.TrimEnd('/');
             _noAppHostDomain = noAppHostDomain.TrimEnd('/');
 
-            // Ensure these are absolute base URIs
             _appBase = new Uri(_appHostDomain.EndsWith("/") ? _appHostDomain : _appHostDomain + "/");
             _noAppBase = new Uri(_noAppHostDomain.EndsWith("/") ? _noAppHostDomain : _noAppHostDomain + "/");
         }
 
         public string RewriteContent(string content, string url)
         {
-            var extension = Path.GetExtension(FileDownloader.RemoveFragmentAndQuery(url));
+            var extension = Path.GetExtension(StripQuery(StripFragment(url)));
             if (string.Equals(extension, ".xml", StringComparison.OrdinalIgnoreCase))
             {
                 return RewriteXmlUrls(content);
@@ -42,10 +41,7 @@ namespace GitSiteSyncer.Utilities
             var htmlDocument = new HtmlDocument();
             htmlDocument.LoadHtml(htmlContent);
 
-            // Rewrite links with class "app-link"
             RewriteAnchorsByClass(htmlDocument, "app-link", _appBase);
-
-            // Rewrite links with class "no-app-link"
             RewriteAnchorsByClass(htmlDocument, "no-app-link", _noAppBase);
 
             using var writer = new StringWriter();
@@ -62,8 +58,6 @@ namespace GitSiteSyncer.Utilities
             {
                 var href = link.GetAttributeValue("href", string.Empty)?.Trim() ?? "";
                 if (string.IsNullOrWhiteSpace(href)) continue;
-
-                // Skip non-http navigations
                 if (IsNonHttpHref(href)) continue;
 
                 var rewritten = RewriteUrlPreserveQueryAndFragment(href, baseUri);
@@ -73,13 +67,12 @@ namespace GitSiteSyncer.Utilities
 
         private string RewriteXmlUrls(string xmlContent)
         {
-            // This is fine; XML sitemaps won’t use fragments anyway.
+            // XML sitemaps don't carry query/fragment, simple host swap is fine.
             return xmlContent.Replace(_appHostDomain, _noAppHostDomain);
         }
 
         private static bool IsNonHttpHref(string href)
         {
-            // do not touch these schemes
             return href.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase)
                 || href.StartsWith("tel:", StringComparison.OrdinalIgnoreCase)
                 || href.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase)
@@ -88,62 +81,86 @@ namespace GitSiteSyncer.Utilities
         }
 
         /// <summary>
-        /// Rewrites href to be absolute under baseUri, preserving ?query and #fragment.
-        /// Handles absolute, /root-relative, ~/tilde, and relative paths.
+        /// Rewrites href so that the scheme + host come from baseUri while preserving
+        /// the original path, query string, and fragment exactly as authored.
+        /// Handles absolute, root-relative ("/foo"), tilde ("~/foo"), and
+        /// document-relative ("foo/bar") hrefs.
         /// </summary>
-        private string RewriteUrlPreserveQueryAndFragment(string href, Uri baseUri)
+        private static string RewriteUrlPreserveQueryAndFragment(string href, Uri baseUri)
         {
-            // Preserve fragment/query explicitly:
-            // - For absolute hrefs, Uri.Fragment has the '#...'
-            // - For relative hrefs, we can parse it too, but easiest is:
-            //   split into (coreWithoutQueryFragment) + (query+fragment) then rebuild.
-            var (query, fragment) = FileDownloader.GetQueryAndFragment(href);
-            var core = StripQueryAndFragment(href);
-
-            // Normalize "~/" to root-relative
-            if (core.StartsWith("~/"))
+            // 1) Split off fragment FIRST (it appears after the query in the URL).
+            string fragment = "";
+            var hashIdx = href.IndexOf('#');
+            if (hashIdx >= 0)
             {
-                core = "/" + core.Substring(2);
+                fragment = href.Substring(hashIdx); // includes leading '#'
+                href = href.Substring(0, hashIdx);
             }
 
-            // Absolute URL
-            if (Uri.TryCreate(core, UriKind.Absolute, out var abs))
+            // 2) Split off query.
+            string query = "";
+            var qIdx = href.IndexOf('?');
+            if (qIdx >= 0)
             {
-                // Replace host by projecting path+query onto baseUri,
-                // but query already extracted; use abs.AbsolutePath
-                var builder = new UriBuilder(baseUri)
+                query = href.Substring(qIdx); // includes leading '?'
+                href = href.Substring(0, qIdx);
+            }
+
+            // 3) `href` is now just the path portion. Normalize "~/" to root-relative.
+            if (href.StartsWith("~/"))
+            {
+                href = "/" + href.Substring(2);
+            }
+
+            // 4) Resolve the path under baseUri.
+            string newPath;
+
+            if (Uri.TryCreate(href, UriKind.Absolute, out var abs)
+                && (abs.Scheme == Uri.UriSchemeHttp || abs.Scheme == Uri.UriSchemeHttps))
+            {
+                // Absolute http(s) — keep its path, swap host.
+                newPath = abs.AbsolutePath;
+            }
+            else if (string.IsNullOrEmpty(href))
+            {
+                // Pure "?query" or "#frag" href — keep baseUri's path.
+                newPath = baseUri.AbsolutePath;
+            }
+            else if (href.StartsWith("/"))
+            {
+                // Root-relative — use as-is.
+                newPath = href;
+            }
+            else
+            {
+                // Document-relative — resolve against baseUri.
+                try
                 {
-                    Path = abs.AbsolutePath.TrimStart('/'),
-                    Query = query.StartsWith("?") ? query.Substring(1) : query,
-                    Fragment = fragment.StartsWith("#") ? fragment.Substring(1) : fragment
-                };
-                return builder.Uri.ToString();
-            }
-
-            // Relative URL (root-relative or relative)
-            if (Uri.TryCreate(core, UriKind.Relative, out var rel))
-            {
-                // Make absolute using baseUri
-                var combined = new Uri(baseUri, rel);
-
-                var builder = new UriBuilder(combined)
+                    var combined = new Uri(baseUri, href);
+                    newPath = combined.AbsolutePath;
+                }
+                catch
                 {
-                    Query = query.StartsWith("?") ? query.Substring(1) : query,
-                    Fragment = fragment.StartsWith("#") ? fragment.Substring(1) : fragment
-                };
-                return builder.Uri.ToString();
+                    // Unparseable — return original untouched.
+                    return href + query + fragment;
+                }
             }
 
-            // If we can’t parse it, return original untouched
-            return href;
+            // 5) Reassemble manually to preserve query/fragment EXACTLY as authored.
+            //    (UriBuilder.Query/Fragment can re-encode, which we don't want here.)
+            return $"{baseUri.Scheme}://{baseUri.Authority}{newPath}{query}{fragment}";
         }
 
-        private static string StripQueryAndFragment(string url)
+        private static string StripFragment(string url)
         {
-            // Remove # then ?
-            var noFrag = FileDownloader.RemoveFragment(url);
-            var qIndex = noFrag.IndexOf('?');
-            return qIndex >= 0 ? noFrag.Substring(0, qIndex) : noFrag;
+            var idx = url.IndexOf('#');
+            return idx >= 0 ? url.Substring(0, idx) : url;
+        }
+
+        private static string StripQuery(string url)
+        {
+            var idx = url.IndexOf('?');
+            return idx >= 0 ? url.Substring(0, idx) : url;
         }
     }
 }
