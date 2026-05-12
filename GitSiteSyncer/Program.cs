@@ -99,28 +99,14 @@ class Program
                     .Except(excludedFiles, pathComparer)
                     .ToList();
 
-                var cutoffDate = DateTime.UtcNow.AddMinutes(-config.MinutesToConsider);
-
-                Console.WriteLine("Downloading new or updated files...");
+                Console.WriteLine($"Downloading all {urls.Count} sitemap URLs...");
                 foreach (var url in urls)
                 {
-                    var localPath = downloader.GetFilePathFromUrl(url.Url, config.GitDirectory);
-                    var fileMissing = !File.Exists(localPath);
-                    var recentlyModified = url.LastModified == null || url.LastModified >= cutoffDate;
-
-                    if (fileMissing || recentlyModified)
+                    Console.WriteLine($"Updating: {url.Url}");
+                    var ok = await downloader.DownloadUrlAsync(url.Url, config.GitDirectory);
+                    if (!ok)
                     {
-                        var reason = fileMissing ? "missing locally" : "recently modified";
-                        Console.WriteLine($"Updating ({reason}): {url.Url}");
-                        var ok = await downloader.DownloadUrlAsync(url.Url, config.GitDirectory);
-                        if (!ok)
-                        {
-                            failedDownloads.Add((url.Url, "download failed (see log above)"));
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine($"Skipping outdated URL: {url.Url}");
+                        failedDownloads.Add((url.Url, "download failed (see log above)"));
                     }
                 }
 
