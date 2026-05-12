@@ -26,6 +26,7 @@ class Program
             Console.WriteLine("LockFileDirectory not specified in config.");
             return;
         }
+
         if (!Directory.Exists(config.LockFileDirectory))
         {
             Directory.CreateDirectory(config.LockFileDirectory);
@@ -41,13 +42,25 @@ class Program
                 return;
             }
 
-            using var httpClient = new HttpClient();
+            // Realistic timeout + a UA so picky upstreams (Cloudflare, hosts that 403 the
+            // empty default UA, etc.) actually serve us.
+            using var httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(60)
+            };
+            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "GitSiteSyncer/1.0 (+https://monerica.com)");
+            httpClient.DefaultRequestHeaders.Accept.ParseAdd(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
 
-            // Pick the right comparer for this OS:
             // Windows = case-insensitive paths, Linux/macOS = case-sensitive.
             var pathComparer = OperatingSystem.IsWindows()
                 ? StringComparer.OrdinalIgnoreCase
                 : StringComparer.Ordinal;
+
+            // Track failures so we can summarize at the end AND skip destructive deletes
+            // when something went wrong this run.
+            var failedDownloads = new List<(string Url, string Reason)>();
 
             try
             {
@@ -91,10 +104,19 @@ class Program
                 Console.WriteLine("Downloading new or updated files...");
                 foreach (var url in urls)
                 {
-                    if (url.LastModified == null || url.LastModified >= cutoffDate)
+                    var localPath = downloader.GetFilePathFromUrl(url.Url, config.GitDirectory);
+                    var fileMissing = !File.Exists(localPath);
+                    var recentlyModified = url.LastModified == null || url.LastModified >= cutoffDate;
+
+                    if (fileMissing || recentlyModified)
                     {
-                        Console.WriteLine($"Updating: {url.Url}");
-                        await downloader.DownloadUrlAsync(url.Url, config.GitDirectory);
+                        var reason = fileMissing ? "missing locally" : "recently modified";
+                        Console.WriteLine($"Updating ({reason}): {url.Url}");
+                        var ok = await downloader.DownloadUrlAsync(url.Url, config.GitDirectory);
+                        if (!ok)
+                        {
+                            failedDownloads.Add((url.Url, "download failed (see log above)"));
+                        }
                     }
                     else
                     {
@@ -102,7 +124,19 @@ class Program
                     }
                 }
 
-                if (filesToDelete.Any())
+                // Safety net: if anything failed this run, do NOT run the delete pass.
+                // A transient 5xx or rate-limit shouldn't be allowed to wipe pages.
+                if (failedDownloads.Count > 0)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"WARNING: {failedDownloads.Count} download(s) failed this run:");
+                    foreach (var (failedUrl, reason) in failedDownloads)
+                    {
+                        Console.WriteLine($"  - {failedUrl}  ({reason})");
+                    }
+                    Console.WriteLine("Skipping deletion pass to avoid removing pages that may only be temporarily unreachable.");
+                }
+                else if (filesToDelete.Any())
                 {
                     Console.WriteLine("Deleting obsolete HTML files...");
                     foreach (var file in filesToDelete)
@@ -129,6 +163,7 @@ class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"An error occurred: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
             }
             finally
             {

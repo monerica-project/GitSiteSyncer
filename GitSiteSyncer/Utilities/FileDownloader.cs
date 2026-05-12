@@ -63,11 +63,11 @@ namespace GitSiteSyncer.Utilities
             }
         }
 
-        public async Task DownloadUrlAsync(string url, string baseDirectory, CancellationToken ct = default)
-        {
+       public async Task<bool> DownloadUrlAsync(string url, string baseDirectory, CancellationToken ct = default)
+       {
             if (string.IsNullOrWhiteSpace(url))
             {
-                return;
+                return false;
             }
 
             // Keep original (may contain ? and/or #) so the rewriter can preserve them.
@@ -84,7 +84,13 @@ namespace GitSiteSyncer.Utilities
                 Console.WriteLine($"Getting {requestUrl}");
 
                 using var response = await _client.GetAsync(requestUrl, ct).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
+
+                // Surface the actual HTTP status instead of just throwing into a generic catch.
+                if (!response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"  FAILED {(int)response.StatusCode} {response.ReasonPhrase} for {requestUrl}");
+                    return false;
+                }
 
                 var html = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
@@ -99,10 +105,12 @@ namespace GitSiteSyncer.Utilities
 
                 await File.WriteAllTextAsync(filePath, rewrittenContent, ct).ConfigureAwait(false);
                 Console.WriteLine($"Saved: {filePath}");
+                return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error downloading {requestUrl}: {ex.Message}");
+                Console.WriteLine($"Error downloading {requestUrl}: {ex.GetType().Name}: {ex.Message}");
+                return false;
             }
         }
 
